@@ -30,6 +30,13 @@ class AttribInitializer(type):
                     super(self.__class__, self).__init__(*a, **kw)
                     self.__dict__.update(f_dict)
             classdict['__init__'] = __init__
+            if '__repr__' not in classdict:
+                def __repr__(self):
+                    r = '%s(%s)' % (self.__class__.__name__,
+                                    ', '.join(['%s=%r' % (n, getattr(self, n))
+                                               for n in fields]))
+                    return r
+                classdict['__repr__'] = __repr__
         return type.__new__(meta, classname, bases, classdict)
 
 class Box(object):
@@ -63,18 +70,28 @@ def ver_read(atom, readers):
         raise UnsuportedVersion('version requested: %d' % atom.v)
     return readers[atom.v](atom.f)
 
+def maybe_build_atoms(atype, alist):
+    cls = globals().get(atype)
+    if cls and issubclass(cls, Box):
+        return map(cls.read, alist)
+    return alist
+
 def select_children_atoms(a, *selection):
-    """required: [(type, min_required, max_required), ...]"""
-    cd = a.get_children_dict()
+    return select_atoms(a.get_children_dict(), *selection)
+
+def select_atoms(ad, *selection):
+    """ad: atom dict
+    required: [(type, min_required, max_required), ...]"""
     selected = []
     for atype, req_min, req_max in selection:
-        alist = cd.get(atype, [])
+        alist = ad.get(atype, [])
         found = len(alist)
         if ((req_min is not None and found < req_min) or
             (req_max is not None and found > req_max)):
             raise CannotSelect('requested number of atoms %r: in [%s; %s],'
                                ' found: %d' %
                                (atype, req_min, req_max, found))
+        alist = maybe_build_atoms(atype, alist)
         if req_max == 1:
             if found == 0:
                 selected.append(None)
@@ -148,10 +165,6 @@ class mvhd(FullBox):
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, timescale=ts, duration=d)
 
-def read_mvhd(a):
-    b = mvhd.read(a)
-    return a.type, b.timescale, b.duration
-
 class tkhd(FullBox):
     _fields = ('duration',)
 
@@ -161,10 +174,6 @@ class tkhd(FullBox):
         ver_skip(a, (16, 24))
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, duration=d)
-
-def read_tkhd(a):
-    b = tkhd.read(a)
-    return a.type, b.duration
 
 class mdhd(FullBox):
     _fields = ('timescale', 'duration')
@@ -177,10 +186,6 @@ class mdhd(FullBox):
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, timescale=ts, duration=d)
 
-def read_mdhd(a):
-    b = mdhd.read(a)
-    return a.type, b.timescale, b.duration
-
 class stts(FullBox):
     _fields = ('table',)
 
@@ -190,10 +195,6 @@ class stts(FullBox):
         entries = read_ulong(a.f)
         t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
         return cls(a, table=t)
-
-def read_stts(a):
-    b = stts.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
 
 class ctts(FullBox):
     _fields = ('table',)
@@ -205,10 +206,6 @@ class ctts(FullBox):
         t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
         return cls(a, table=t)
 
-def read_ctts(a):
-    b = ctts.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
-
 class stss(FullBox):
     _fields = ('table',)
 
@@ -218,10 +215,6 @@ class stss(FullBox):
         entries = read_ulong(a.f)
         t = [read_ulong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
-
-def read_stss(a):
-    b = stss.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
 
 class stsz(FullBox):
     _fields = ('sample_size', 'table')
@@ -237,10 +230,6 @@ class stsz(FullBox):
             t = []
         return cls(a, sample_size=ss, table=t)
 
-def read_stsz(a):
-    b = stsz.read(a)
-    return a.type, b.sample_size, len(b.table), ellipsisize(b.table)
-
 class stsc(FullBox):
     _fields = ('table',)
 
@@ -252,10 +241,6 @@ class stsc(FullBox):
              for _ in xrange(entries)]
         return cls(a, table=t)
 
-def read_stsc(a):
-    b = stsc.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
-
 class stco(FullBox):
     _fields = ('table',)
 
@@ -266,10 +251,6 @@ class stco(FullBox):
         t = [read_ulong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
 
-def read_stco(a):
-    b = stco.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
-
 class co64(FullBox):
     _fields = ('table',)
 
@@ -279,10 +260,6 @@ class co64(FullBox):
         entries = read_ulong(a.f)
         t = [read_ulonglong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
-
-def read_co64(a):
-    b = co64.read(a)
-    return a.type, len(b.table), ellipsisize(b.table)
 
 class stz2(FullBox):
     _fields = ('field_size', 'table')
@@ -315,10 +292,6 @@ class stz2(FullBox):
             raise FormatError()
         return cls(a, field_size=field_size, table=t)
 
-def read_stz2(a):
-    b = stz2.read(a)
-    return a.type, b.field_size, len(b.table), ellipsisize(b.table)
-
 class stbl(ContainerBox):
     _fields = ('stss', 'stsz', 'stz2', 'stco', 'co64', 'stts', 'ctts', 'stsc')
 
@@ -333,15 +306,6 @@ class stbl(ContainerBox):
         return cls(a, stss=astss, stsz=astsz, stz2=astz2, stco=astco,
                    co64=aco64, stts=astts, ctts=actts, stsc=astsc)
 
-def read_stbl(a):
-    b = stbl.read(a)
-    return (a.type, b._atom.get_children_dict(),
-            read_stts(b.stts),
-            read_stsc(b.stsc),
-            b.stss and read_stss(b.stss) or '/no stss/',
-            b.stsz and read_stsz(b.stsz) or read_stz2(b.stz2),
-            b.stco and read_stco(b.stco) or read_co64(b.co64))
-
 class minf(ContainerBox):
     _fields = ('stbl',)
 
@@ -350,10 +314,6 @@ class minf(ContainerBox):
     def read(cls, a):
         (astbl,) = select_children_atoms(a, ('stbl', 1, 1))
         return cls(a, stbl=astbl)
-
-def read_minf(a):
-    b = minf.read(a)
-    return a.type, b._atom.get_children_dict(), read_stbl(b.stbl)
 
 class mdia(ContainerBox):
     _fields = ('mdhd', 'minf')
@@ -365,11 +325,6 @@ class mdia(ContainerBox):
                                                ('minf', 1, 1))
         return cls(a, mdhd=amdhd, minf=aminf)
 
-def read_mdia(a):
-    b = mdia.read(a)
-    return (a.type, b._atom.get_children_dict(), read_mdhd(b.mdhd),
-            read_minf(b.minf))
-
 class trak(ContainerBox):
     _fields = ('tkhd', 'mdia')
 
@@ -379,11 +334,6 @@ class trak(ContainerBox):
         (atkhd, amdia) = select_children_atoms(a, ('tkhd', 1, 1),
                                                ('mdia', 1, 1))
         return cls(a, tkhd=atkhd, mdia=amdia)
-
-def read_trak(a):
-    b = trak.read(a)
-    return (a.type, b._atom.get_children_dict(), read_tkhd(b.tkhd),
-            read_mdia(b.mdia))
 
 class moov(ContainerBox):
     _fields = ('mvhd', 'trak')
@@ -395,32 +345,29 @@ class moov(ContainerBox):
                                                ('trak', 1, None))
         return cls(a, mvhd=amvhd, trak=traks)
 
-def read_moov(a):
-    b = moov.read(a)
-    return (a.type, b._atom.get_children_dict(), read_mvhd(b.mvhd),
-            map(read_trak, b.trak))
+class ftyp(Box):
+    _fields = ('brand', 'version')
 
-def read_iso_file(fobj):
-    fobj.seek(0)                # ??
-
-    brand = 'mp41'
-    version = 0
-
-    a = atoms.read_atom(fobj)
-
-    if a.type == 'ftyp':
+    @classmethod
+    def read(cls, a):
         a.seek_to_data()
         brand = read_fcc(a.f)
-        version = read_ulong(a.f)
-        a.seek_to_end()
+        v = read_ulong(a.f)
+        return cls(a, brand=brand, version=v)
 
-    d = atoms.atoms_dict(atoms.read_atoms(fobj))
-    moov = d.get('moov')[0]
-    return brand, hex(version), d, read_moov(moov)
+def read_iso_file(fobj):
+    fobj.seek(0)
 
+    aftyp, amoov = select_atoms(atoms.atoms_dict(atoms.read_atoms(fobj)),
+                                ('ftyp', 1, 1), ('moov', 1, 1))
+
+    return aftyp, amoov
 
 if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
-    import pprint
-    pprint.pprint(read_iso_file(f))
+    from pprint import pprint
+    iso = read_iso_file(f)
+    pprint(iso)
+    amoov = iso[1]
+    pprint(amoov.mvhd)
