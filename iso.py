@@ -81,7 +81,7 @@ def select_children_atoms(a, *selection):
 
 def select_atoms(ad, *selection):
     """ad: atom dict
-    required: [(type, min_required, max_required), ...]"""
+    selection: [(type, min_required, max_required), ...]"""
     selected = []
     for atype, req_min, req_max in selection:
         alist = ad.get(atype, [])
