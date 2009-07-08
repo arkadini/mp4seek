@@ -22,6 +22,44 @@ def container_children(a):
     cd = atoms.atoms_dict(a.read_children())
     return a, cd
 
+def find_cut_stts(stts, mt):
+    "stts - table of the 'stts' atom; mt - media time"
+    current = 0
+    trimmed = None
+    i, n = 0, len(stts)
+    while i < n:
+        count, delta = stts[i]
+        cdelta = count * delta
+        if mt == current:
+            trimmed = stts[i + 1:]
+            break
+        elif mt < current + cdelta:
+            new_count = count - (mt - current) / delta
+            trimmed = [(new_count, delta)] + stts[i + 1:]
+            break
+        current += cdelta
+        i += 1
+    return trimmed or stts
+
+def find_samplenum_stts(stts, mt):
+    "stts - table of the 'stts' atom; mt - media time"
+    ctime = 0
+    samples = 0
+    i, n = 0, len(stts)
+    while i < n:
+        if mt == ctime:
+            break
+        count, delta = stts[i]
+        cdelta = count * delta
+        if mt < ctime + cdelta:
+            samples += (mt - ctime) // delta
+            break
+        ctime += cdelta
+        samples += count
+        i += 1
+
+    return samples
+
 def read_mvhd(a):
     a = atoms.full(a)
     if a.v == 0:
