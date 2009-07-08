@@ -51,6 +51,7 @@ class ContainerAtom(Atom):
     def __init__(self, size, type, offset, fobj, real_size=None):
         Atom.__init__(self, size, type, offset, fobj, real_size)
         self._children = None
+        self._children_dict = None
 
     def read_children(self):
         head_size = 8
@@ -63,6 +64,11 @@ class ContainerAtom(Atom):
         if self._children is None:
             self._children = list(self.read_children())
         return self._children
+
+    def get_children_dict(self):
+        if self._children_dict is None:
+            self._children_dict = atoms_dict(self.read_children())
+        return self._children_dict
 
     @classmethod
     def from_atom(cls, a):
