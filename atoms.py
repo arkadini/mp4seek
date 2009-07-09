@@ -31,6 +31,9 @@ class Atom(object):
     def skip(self, bytes):
         self.f.seek(bytes, 1)
 
+    def seek_to_start(self):
+        self.f.seek(self.offset)
+
     def seek_to_data(self):
         head_size = self.head_size()
         self.f.seek(self.offset + head_size)
@@ -39,11 +42,19 @@ class Atom(object):
     def seek_to_end(self):
         self.f.seek(self.offset + self.size)
 
+    def write(self, fobj):
+        # print '[ a] writing:', self
+        self.seek_to_start()
+        fobj.write(self.read_bytes(self.size))
+
     def itype(self):
         return struct.unpack('>L', self.type)[0]
 
     def get_size(self):
         return self.size
+
+    def get_offset(self):
+        return self.offset
 
     def __repr__(self):
         return ('%s(%d, %r, %d, real_size=%d)' %

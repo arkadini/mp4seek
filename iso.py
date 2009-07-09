@@ -4,6 +4,17 @@ import atoms
 from atoms import read_fcc, read_ulong, read_ulonglong
 
 
+def write_ulong(fobj, n):
+    fobj.write(struct.pack('>L', n))
+
+def write_ulonglong(fobj, n):
+    fobj.write(struct.pack('>Q', n))
+
+def write_fcc(fobj, fcc_str):
+    # print '[wfcc]: @%d %r' % (fobj.tell(), fcc_str)
+    fobj.write('%-4.4s' % fcc_str)
+
+
 class UnsuportedVersion(Exception):
     pass
 
@@ -48,6 +59,9 @@ class Box(object):
         # should be overriden in the boxes we want to be able to modify
         return self._atom.get_size()
 
+    def get_offset(self):
+        return self._atom.get_offset()
+
     def copy(self, *a, **kw):
         cls = self.__class__
         if getattr(self, '_fields', None):
@@ -57,11 +71,27 @@ class Box(object):
             attribs = {}
         return cls(self._atom, **attribs)
 
+    def write(self, fobj):
+        # print '[ b] writing:', self
+        self._atom.write(fobj)
+
+    def write_head(self, fobj):
+        # assuming 'short' sizes for now - FIXME!
+        # print '[ b] writing head:', self._atom
+        a = self._atom
+        write_ulong(fobj, self.get_size())
+        write_fcc(fobj, a.type)
+
 class FullBox(Box):
     def tabled_size(self, body_size, loop_size):
         # TODO: move to a separate TableFullBox subclass?
         return (self._atom.head_size_ext() + body_size +
                 len(self.table) * loop_size)
+
+    def write_head(self, fobj):
+        Box.write_head(self, fobj)
+        a = self._atom
+        write_ulong(fobj, (a.v & 0xff) << 24 | (a.flags & 0xffffff))
 
 class ContainerBox(Box):
     def get_size(self):
@@ -81,6 +111,34 @@ class ContainerBox(Box):
             size += sum([a.get_size() for a in v])
         # print '[<] getting size: %r = %r' % (self._atom, size)
         return size
+
+    def write(self, fobj):
+        self.write_head(fobj)
+
+        fields = getattr(self, '_fields', [])
+        cd = self._atom.get_children_dict()
+        to_write = []
+        for k, v in cd.items():
+            if k in fields:
+                v = getattr(self, k)
+                if not isinstance(v, (tuple, list)):
+                    if v is None:
+                        v = []
+                    else:
+                        v = [v]
+            to_write.extend(v)
+
+        def _get_offset(a):
+            return a.get_offset()
+
+        to_write.sort(key=_get_offset)
+
+        # print '[  ] going to write:', \
+        #     ([(isinstance(a, Box) and a._atom.type or a.type)
+        #       for a in to_write])
+        for ca in to_write:
+            # print '[cb] writing:', ca
+            ca.write(fobj)
 
 def fullboxread(f):
     def _with_full_atom_read_wrapper(cls, a):
@@ -121,8 +179,8 @@ def select_atoms(ad, *selection):
         if ((req_min is not None and found < req_min) or
             (req_max is not None and found > req_max)):
             raise CannotSelect('requested number of atoms %r: in [%s; %s],'
-                               ' found: %d' %
-                               (atype, req_min, req_max, found))
+                               ' found: %d (all children: %r)' %
+                               (atype, req_min, req_max, found, ad))
         alist = maybe_build_atoms(atype, alist)
         if req_max == 1:
             if found == 0:
@@ -228,6 +286,27 @@ class mvhd(FullBox):
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, timescale=ts, duration=d)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        a = self._atom
+        a.seek_to_start()
+        a.skip(a.head_size_ext())
+
+        if a.v == 0:
+            fobj.write(a.read_bytes(8))
+            write_ulong(fobj, self.timescale)
+            write_ulong(fobj, self.duration)
+            a.skip(8)
+        elif a.v == 1:
+            fobj.write(a.read_bytes(16))
+            write_ulong(fobj, self.timescale)
+            write_ulonglong(fobj, self.duration)
+            a.skip(12)
+        else:
+            raise RuntimeError()
+
+        fobj.write(a.read_bytes(80))
+
 class tkhd(FullBox):
     _fields = ('duration',)
 
@@ -237,6 +316,25 @@ class tkhd(FullBox):
         ver_skip(a, (16, 24))
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, duration=d)
+
+    def write(self, fobj):
+        self.write_head(fobj)
+        a = self._atom
+        a.seek_to_start()
+        a.skip(a.head_size_ext())
+
+        if a.v == 0:
+            fobj.write(a.read_bytes(16))
+            write_ulong(fobj, self.duration)
+            a.skip(4)
+        elif a.v == 1:
+            fobj.write(a.read_bytes(24))
+            write_ulonglong(fobj, self.duration)
+            a.skip(8)
+        else:
+            raise RuntimeError()
+
+        fobj.write(a.read_bytes(60))
 
 class mdhd(FullBox):
     _fields = ('timescale', 'duration')
@@ -248,6 +346,27 @@ class mdhd(FullBox):
         ts = read_ulong(a.f)
         d = ver_read(a, (read_ulong, read_ulonglong))
         return cls(a, timescale=ts, duration=d)
+
+    def write(self, fobj):
+        self.write_head(fobj)
+        a = self._atom
+        a.seek_to_start()
+        a.skip(a.head_size_ext())
+
+        if a.v == 0:
+            fobj.write(a.read_bytes(8))
+            write_ulong(fobj, self.timescale)
+            write_ulong(fobj, self.duration)
+            a.skip(8)
+        elif a.v == 1:
+            fobj.write(a.read_bytes(16))
+            write_ulong(fobj, self.timescale)
+            write_ulonglong(fobj, self.duration)
+            a.skip(12)
+        else:
+            raise RuntimeError()
+
+        fobj.write(a.read_bytes(4))
 
 class stts(FullBox):
     _fields = ('table',)
@@ -262,6 +381,13 @@ class stts(FullBox):
     def get_size(self):
         return self.tabled_size(4, 8)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulong(fobj, elt[0])
+            write_ulong(fobj, elt[1])
+
 class ctts(FullBox):
     _fields = ('table',)
 
@@ -275,6 +401,13 @@ class ctts(FullBox):
     def get_size(self):
         return self.tabled_size(4, 8)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulong(fobj, elt[0])
+            write_ulong(fobj, elt[1])
+
 class stss(FullBox):
     _fields = ('table',)
 
@@ -287,6 +420,12 @@ class stss(FullBox):
 
     def get_size(self):
         return self.tabled_size(4, 4)
+
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulong(fobj, elt)
 
 class stsz(FullBox):
     _fields = ('sample_size', 'table')
@@ -307,6 +446,14 @@ class stsz(FullBox):
             return self._atom.head_size_ext() + 8
         return self.tabled_size(8, 4)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, self.sample_size)
+        write_ulong(fobj, len(self.table))
+        if self.sample_size == 0:
+            for elt in self.table:
+                write_ulong(fobj, elt)
+
 class stsc(FullBox):
     _fields = ('table',)
 
@@ -321,6 +468,14 @@ class stsc(FullBox):
     def get_size(self):
         return self.tabled_size(4, 12)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulong(fobj, elt[0])
+            write_ulong(fobj, elt[1])
+            write_ulong(fobj, elt[2])
+
 class stco(FullBox):
     _fields = ('table',)
 
@@ -334,6 +489,12 @@ class stco(FullBox):
     def get_size(self):
         return self.tabled_size(4, 4)
 
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulong(fobj, elt)
+
 class co64(FullBox):
     _fields = ('table',)
 
@@ -346,6 +507,12 @@ class co64(FullBox):
 
     def get_size(self):
         return self.tabled_size(4, 8)
+
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, len(self.table))
+        for elt in self.table:
+            write_ulonglong(fobj, elt)
 
 class stz2(FullBox):
     _fields = ('field_size', 'table')
@@ -381,6 +548,31 @@ class stz2(FullBox):
     def get_size(self):
         fs = self.field_size / 8.0
         return int(self.tabled_size(8, fs))
+
+    def write(self, fobj):
+        self.write_head(fobj)
+        write_ulong(fobj, self.field_size & 0xff)
+        write_ulong(fobj, len(self.table))
+
+        def write_u16(f, n):
+            fobj.write(struct.pack('>H', n))
+        def write_u8(f, n):
+            fobj.write(struct.pack('B', n))
+        def write_2u4(f, n, m):
+            fobj.write(struct.pack('B', ((n & 0x0f) << 4) | (m & 0x0f)))
+        def takeby(seq, n):
+            return [seq[i:i + n] for i in xrange(0, len(seq), n)]
+        if field_size == 16:
+            for elt in self.table:
+                write_u16(fobj, elt)
+        elif field_size == 8:
+            for elt in self.table:
+                write_u8(fobj, elt)
+        elif field_size == 4:
+            for elt in takeby(self.table, 2):
+                write_2u4(fobj, *elt)
+        else:
+            raise FormatError()
 
 class stbl(ContainerBox):
     _fields = ('stss', 'stsz', 'stz2', 'stco', 'co64', 'stts', 'ctts', 'stsc')
@@ -632,4 +824,9 @@ if __name__ == '__main__':
     iso = read_iso_file(f)
     print iso[0]
     amoov = iso[1]
-    cut_moov(amoov, float(sys.argv[2]))
+    nmoov = cut_moov(amoov, float(sys.argv[2]))
+
+    wf = file('/tmp/t.mp4', 'w')
+    iso[0].write(wf)
+    nmoov.write(wf)
+    wf.close()
