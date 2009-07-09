@@ -19,6 +19,7 @@ class Atom(object):
                 head_size += 8
             self._hsize = head_size
         return self._hsize
+    head_size_ext = head_size
 
     def read_data(self):
         data_left = self.seek_to_data()
@@ -41,6 +42,9 @@ class Atom(object):
     def itype(self):
         return struct.unpack('>L', self.type)[0]
 
+    def get_size(self):
+        return self.size
+
     def __repr__(self):
         return ('%s(%d, %r, %d, real_size=%d)' %
                 (self.__class__.__name__, self.size, self.type, self.offset,
@@ -54,11 +58,8 @@ class ContainerAtom(Atom):
         self._children_dict = None
 
     def read_children(self):
-        head_size = 8
-        if self.real_size == 1:
-            head_size += 8
-        self.f.seek(self.offset + head_size)
-        return read_atoms(self.f, self.size - head_size)
+        data_left = self.seek_to_data()
+        return read_atoms(self.f, data_left)
 
     def get_children(self):
         if self._children is None:
@@ -80,6 +81,9 @@ class FullAtom(Atom):
         Atom.__init__(self, size, type, offset, fobj, real_size=real_size)
         self.v = v
         self.flags = flags
+
+    def head_size_ext(self):
+        return self.head_size() + 4
 
     @classmethod
     def from_atom(cls, a, v, flags):

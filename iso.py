@@ -46,7 +46,7 @@ class Box(object):
 
     def get_size(self):
         # should be overriden in the boxes we want to be able to modify
-        return self._atom.size
+        return self._atom.get_size()
 
     def copy(self, *a, **kw):
         cls = self.__class__
@@ -58,10 +58,29 @@ class Box(object):
         return cls(self._atom, **attribs)
 
 class FullBox(Box):
-    pass
+    def tabled_size(self, body_size, loop_size):
+        # TODO: move to a separate TableFullBox subclass?
+        return (self._atom.head_size_ext() + body_size +
+                len(self.table) * loop_size)
 
 class ContainerBox(Box):
-    pass
+    def get_size(self):
+        # print '[>] getting size: %r' % self._atom
+        fields = getattr(self, '_fields', [])
+        cd = self._atom.get_children_dict()
+        size = self._atom.head_size_ext()
+        for k, v in cd.items():
+            if k in fields:
+                v = getattr(self, k)
+                if not isinstance(v, (tuple, list)):
+                    if v is None:
+                        v = []
+                    else:
+                        v = [v]
+            # print 'size for %r = %r' % (sum([a.get_size() for a in v]), v)
+            size += sum([a.get_size() for a in v])
+        # print '[<] getting size: %r = %r' % (self._atom, size)
+        return size
 
 def fullboxread(f):
     def _with_full_atom_read_wrapper(cls, a):
@@ -240,6 +259,9 @@ class stts(FullBox):
         t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
         return cls(a, table=t)
 
+    def get_size(self):
+        return self.tabled_size(4, 8)
+
 class ctts(FullBox):
     _fields = ('table',)
 
@@ -250,6 +272,9 @@ class ctts(FullBox):
         t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
         return cls(a, table=t)
 
+    def get_size(self):
+        return self.tabled_size(4, 8)
+
 class stss(FullBox):
     _fields = ('table',)
 
@@ -259,6 +284,9 @@ class stss(FullBox):
         entries = read_ulong(a.f)
         t = [read_ulong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
+
+    def get_size(self):
+        return self.tabled_size(4, 4)
 
 class stsz(FullBox):
     _fields = ('sample_size', 'table')
@@ -274,6 +302,11 @@ class stsz(FullBox):
             t = []
         return cls(a, sample_size=ss, table=t)
 
+    def get_size(self):
+        if self.sample_size != 0:
+            return self._atom.head_size_ext() + 8
+        return self.tabled_size(8, 4)
+
 class stsc(FullBox):
     _fields = ('table',)
 
@@ -285,6 +318,9 @@ class stsc(FullBox):
              for _ in xrange(entries)]
         return cls(a, table=t)
 
+    def get_size(self):
+        return self.tabled_size(4, 12)
+
 class stco(FullBox):
     _fields = ('table',)
 
@@ -295,6 +331,9 @@ class stco(FullBox):
         t = [read_ulong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
 
+    def get_size(self):
+        return self.tabled_size(4, 4)
+
 class co64(FullBox):
     _fields = ('table',)
 
@@ -304,6 +343,9 @@ class co64(FullBox):
         entries = read_ulong(a.f)
         t = [read_ulonglong(a.f) for _ in xrange(entries)]
         return cls(a, table=t)
+
+    def get_size(self):
+        return self.tabled_size(4, 8)
 
 class stz2(FullBox):
     _fields = ('field_size', 'table')
@@ -335,6 +377,10 @@ class stz2(FullBox):
         else:
             raise FormatError()
         return cls(a, field_size=field_size, table=t)
+
+    def get_size(self):
+        fs = self.field_size / 8.0
+        return int(self.tabled_size(8, fs))
 
 class stbl(ContainerBox):
     _fields = ('stss', 'stsz', 'stz2', 'stco', 'co64', 'stts', 'ctts', 'stsc')
@@ -561,6 +607,9 @@ def cut_moov(amoov, t):
     new_moov = amoov.copy(mvhd=amoov.mvhd.copy(), trak=new_traks)
 
     moov_size_diff = amoov.get_size() - new_moov.get_size()
+    print ('moov_size_diff', moov_size_diff, amoov.get_size(),
+           new_moov.get_size())
+    print 'real moov sizes', amoov._atom.size, new_moov._atom.size
 
     def update_trak_duration(atrak):
         amdhd = atrak.mdia.mdhd
