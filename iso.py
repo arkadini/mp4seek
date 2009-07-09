@@ -134,7 +134,7 @@ def find_cut_stts(stts, mt):
 def find_samplenum_stts(stts, mt):
     "stts - table of the 'stts' atom; mt - media time"
     ctime = 0
-    samples = 0
+    samples = 1
     i, n = 0, len(stts)
     while i < n:
         if mt == ctime:
@@ -149,6 +149,25 @@ def find_samplenum_stts(stts, mt):
         i += 1
 
     return samples
+
+def find_chunknum_stsc(stsc, sample_num):
+    current = 1                 # 1-based indices!
+    per_chunk = 0
+    samples = 1
+    i, n = 0, len(stsc)
+    while i < n:
+        next, next_per_chunk, _sdidx = stsc[i]
+        samples_here = (next - current) * per_chunk
+        if samples + samples_here > sample_num:
+            break
+        samples += samples_here
+        current, per_chunk = next, next_per_chunk
+        i += 1
+    return (sample_num - samples) // per_chunk + current
+
+def get_chunk_offset(stco64, chunk_num):
+    # 1-based indices!
+    return stco64[chunk_num - 1]
 
 class mvhd(FullBox):
     _fields = (
@@ -358,16 +377,101 @@ class ftyp(Box):
 def read_iso_file(fobj):
     fobj.seek(0)
 
-    aftyp, amoov = select_atoms(atoms.atoms_dict(atoms.read_atoms(fobj)),
-                                ('ftyp', 1, 1), ('moov', 1, 1))
+    ad = atoms.atoms_dict(atoms.read_atoms(fobj))
+    aftyp, amoov, mdat = select_atoms(ad, ('ftyp', 1, 1), ('moov', 1, 1),
+                                      ('mdat', 1, None))
+    print '(first mdat offset: %d)' % mdat[0].offset
 
     return aftyp, amoov
+
+def find_cut_trak_info(atrak, t):
+    ts = atrak.mdia.mdhd.timescale
+    stbl = atrak.mdia.minf.stbl
+    mt = int(t * ts)
+    sample = find_samplenum_stts(stbl.stts.table, mt)
+    chunk = find_chunknum_stsc(stbl.stsc.table, sample)
+    stco64 = stbl.stco or stbl.co64
+    chunk_offset = get_chunk_offset(stco64.table, chunk)
+    zero_offset = get_chunk_offset(stco64.table, 1)
+    return sample, chunk, zero_offset, chunk_offset
+
+def cut_stco64(stco64, chunk_num, offset_change):
+    new_table = [offset - offset_change for offset in stco64[chunk_num - 1:]]
+    return new_table
+
+def cut_stsc(stsc, chunk_num):
+    i, n = 0, len(stsc)
+    current, per_chunk, sdidx = None, None, None
+    while i < n:
+        next, next_per_chunk, next_sdidx = stsc[i]
+        if next > chunk_num:
+            return [(chunk_num, per_chunk, sdidx)] + stsc[i:]
+        current, per_chunk, sdidx = next, next_per_chunk, next_sdidx
+        i += 1
+    return [(chunk_num, per_chunk, sdidx)]
+
+def cut_sctts(sctts, sample):
+    samples = 1
+    i, n = 0, len(stts)
+    while i < n:
+        count, delta = stts[i]
+        if samples + count > sample:
+            return [(samples + count - sample, delta)] + stts[i+1:]
+        samples += count
+        i += 1
+    return []                   # ? :/
+
+def cut_stss(stss, sample):
+    i, n = 0, len(stss)
+    while i < n:
+        snum = stss[i]
+        if snum >= sample:
+            return [s - sample + 1 for s in stss[i:]]
+        i += 1
+    return []
+
+def cut_stsz2(stsz2, sample):
+    if not stsz2:
+        return []
+    return stsz2[sample - 1:]
+
+def cut_trak(atrak, sample, data_offset_change):
+    stbl = atrak.mdia.minf.stbl
+    chunk = find_chunknum_stsc(stbl.stsc.table, sample)
+    
+    """
+    cut_stco64()
+    cut_stsc()
+    cut_stsz2()
+    cut_sctts(stts)
+    cut_sctts(ctts)
+    cut_stss()
+    cut_stco64(stco64, 1, ...)  # again, after calculating new size of moov
+    atrak.mdia.mdhd.duration = new_duration
+    """
+    
+
+def cut_moov(amoov, t):
+    ts = amoov.mvhd.timescale
+    duration = amoov.mvhd.duration
+    if t * ts >= duration:
+        raise RuntimeError('Exceeded file duration: %r' %
+                           (duration / float(ts)))
+    traks = amoov.trak
+    print 'movie timescale: %d, num tracks: %d' % (ts, len(traks))
+    print
+    cut_info = map(lambda a: find_cut_trak_info(a, t), traks)
+    print cut_info
+    new_data_offset = min([ci[3] for ci in cut_info])
+    zero_offset = min([ci[2] for ci in cut_info])
+    print 'new offset: %d, delta: %d' % (new_data_offset,
+                                         new_data_offset - zero_offset)
 
 if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
     from pprint import pprint
     iso = read_iso_file(f)
-    pprint(iso)
+    print iso[0]
     amoov = iso[1]
-    pprint(amoov.mvhd)
+    cut_moov(amoov, float(sys.argv[2]))
