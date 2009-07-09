@@ -44,6 +44,10 @@ class Box(object):
     def __init__(self, atom):
         self._atom = atom
 
+    def get_size(self):
+        # should be overriden in the boxes we want to be able to modify
+        return self._atom.size
+
 class FullBox(Box):
     pass
 
@@ -412,11 +416,11 @@ def cut_stsc(stsc, chunk_num):
 
 def cut_sctts(sctts, sample):
     samples = 1
-    i, n = 0, len(stts)
+    i, n = 0, len(sctts)
     while i < n:
-        count, delta = stts[i]
+        count, delta = sctts[i]
         if samples + count > sample:
-            return [(samples + count - sample, delta)] + stts[i+1:]
+            return [(samples + count - sample, delta)] + sctts[i+1:]
         samples += count
         i += 1
     return []                   # ? :/
@@ -446,10 +450,31 @@ def cut_trak(atrak, sample, data_offset_change):
     cut_sctts(stts)
     cut_sctts(ctts)
     cut_stss()
+    """
+    
+    stco64 = stbl.stco or stbl.co64
+    stco64_class = stbl.stco and stco or co64
+    new_stco64 = stco64_class(stco64._atom,
+                              table=cut_stco64(stco64.table, chunk,
+                                               data_offset_change))
+    new_stsc = stsc(stbl.stsc._atom, table=cut_stsc(stbl.stsc.table, chunk))
+    stsz2 = stbl.stsz or stbl.stz2
+    stsz2_class = stbl.stsz and stsz or stz2
+    new_stsz2 = stsz2_class(stsz2._atom, table=cut_stsz2(stsz2.table, sample))
+    new_stts = stts(stbl.stts._atom, table=cut_sctts(stbl.stts.table, sample))
+    new_ctts = None
+    if stbl.ctts:
+        new_ctts = ctts(stbl.ctts._atom,
+                        table=cut_sctts(stbl.ctts.table, sample))
+    new_stss = None
+    if stbl.stss:
+        new_stss = stss(stbl.stss._atom,
+                        table=cut_stss(stbl.stss.table, sample))
+
+    """
     cut_stco64(stco64, 1, ...)  # again, after calculating new size of moov
     atrak.mdia.mdhd.duration = new_duration
     """
-    
 
 def cut_moov(amoov, t):
     ts = amoov.mvhd.timescale
@@ -461,11 +486,15 @@ def cut_moov(amoov, t):
     print 'movie timescale: %d, num tracks: %d' % (ts, len(traks))
     print
     cut_info = map(lambda a: find_cut_trak_info(a, t), traks)
-    print cut_info
+    print 'cut_info:', cut_info
     new_data_offset = min([ci[3] for ci in cut_info])
     zero_offset = min([ci[2] for ci in cut_info])
     print 'new offset: %d, delta: %d' % (new_data_offset,
                                          new_data_offset - zero_offset)
+
+    new_traks = map(lambda a, ci: cut_trak(a, ci[0],
+                                           new_data_offset - zero_offset),
+                    traks, cut_info)
 
 if __name__ == '__main__':
     import sys
