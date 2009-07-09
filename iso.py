@@ -51,7 +51,8 @@ class Box(object):
     def copy(self, *a, **kw):
         cls = self.__class__
         if getattr(self, '_fields', None):
-            attribs = dict([(k, kw[k]) for k in self._fields if k in kw])
+            attribs = dict([(k, getattr(self, k)) for k in self._fields])
+            attribs.update(dict([(k, kw[k]) for k in self._fields if k in kw]))
         else:
             attribs = {}
         return cls(self._atom, **attribs)
@@ -161,6 +162,18 @@ def find_samplenum_stts(stts, mt):
         i += 1
 
     return samples
+
+def find_mediatime_stts(stts, sample):
+    ctime = 0
+    samples = 1
+    i, n = 0, len(stts)
+    while i < n:
+        count, delta = stts[i]
+        if samples + count >= sample:
+            return ctime + (sample - samples) * delta
+        ctime += count * delta
+        samples += count
+    return ctime
 
 def find_chunknum_stsc(stsc, sample_num):
     current = 1                 # 1-based indices!
@@ -450,6 +463,9 @@ def cut_stsz2(stsz2, sample):
 def cut_trak(atrak, sample, data_offset_change):
     stbl = atrak.mdia.minf.stbl
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
+    media_time_diff = find_mediatime_stts(stbl.stts.table, sample) # - 0
+    new_media_duration = atrak.mdia.mdhd.duration - media_time_diff
+
     
     """
     cut_stco64()
@@ -486,12 +502,41 @@ def cut_trak(atrak, sample, data_offset_change):
     new_trak = atrak.copy()
     """
 
+    stbl_attribs = dict(stts=new_stts, stsc=new_stsc)
+    stbl_attribs[stbl.stco and 'stco' or 'co64'] = new_stco64
+    stbl_attribs[stbl.stsz and 'stsz' or 'stz2'] = new_stsz2
+    if new_ctts:
+        stbl_attribs['ctts'] = new_ctts
+    if new_stss:
+        stbl_attribs['stss'] = new_stss
+
+    new_stbl = stbl.copy(**stbl_attribs)
+    new_minf = atrak.mdia.minf.copy(stbl=new_stbl)
+    new_mdhd = atrak.mdia.mdhd.copy(duration=new_media_duration)
+    new_mdia = atrak.mdia.copy(mdhd=new_mdhd, minf=new_minf)
+    new_tkhd = atrak.tkhd.copy()
+    new_trak = atrak.copy(tkhd=new_tkhd, mdia=new_mdia)
+
+    # print 'old trak:'
+    # print atrak
+
+    return new_trak
 
 def update_offsets(atrak, data_offset_change):
     """
     cut_stco64(stco64, 1, ...)  # again, after calculating new size of moov
     atrak.mdia.mdhd.duration = new_duration
     """
+
+    # print 'offset updates:'
+    # print atrak
+
+    stbl = atrak.mdia.minf.stbl
+    stco64 = stbl.stco or stbl.co64
+    stco64.table = cut_stco64(stco64.table, 1, data_offset_change)
+
+    # print atrak
+    # print
 
 def cut_moov(amoov, t):
     ts = amoov.mvhd.timescale
@@ -512,6 +557,24 @@ def cut_moov(amoov, t):
     new_traks = map(lambda a, ci: cut_trak(a, ci[0],
                                            new_data_offset - zero_offset),
                     traks, cut_info)
+
+    new_moov = amoov.copy(mvhd=amoov.mvhd.copy(), trak=new_traks)
+
+    moov_size_diff = amoov.get_size() - new_moov.get_size()
+
+    def update_trak_duration(atrak):
+        amdhd = atrak.mdia.mdhd
+        new_duration = amdhd.duration * ts // amdhd.timescale # ... different
+                                                                # rounding? :/
+        atrak.tkhd.duration = new_duration
+
+    # print
+
+    map(update_trak_duration, new_traks)
+    map(lambda a: update_offsets(a, moov_size_diff), new_traks)
+
+    return new_moov
+
 
 if __name__ == '__main__':
     import sys
