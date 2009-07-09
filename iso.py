@@ -48,6 +48,14 @@ class Box(object):
         # should be overriden in the boxes we want to be able to modify
         return self._atom.size
 
+    def copy(self, *a, **kw):
+        cls = self.__class__
+        if getattr(self, '_fields', None):
+            attribs = dict([(k, kw[k]) for k in self._fields if k in kw])
+        else:
+            attribs = {}
+        return cls(self._atom, **attribs)
+
 class FullBox(Box):
     pass
 
@@ -453,24 +461,33 @@ def cut_trak(atrak, sample, data_offset_change):
     """
     
     stco64 = stbl.stco or stbl.co64
-    stco64_class = stbl.stco and stco or co64
-    new_stco64 = stco64_class(stco64._atom,
-                              table=cut_stco64(stco64.table, chunk,
-                                               data_offset_change))
-    new_stsc = stsc(stbl.stsc._atom, table=cut_stsc(stbl.stsc.table, chunk))
+    new_stco64 = stco64.copy(table=cut_stco64(stco64.table, chunk,
+                                              data_offset_change))
+
+    new_stsc = stbl.stsc.copy(table=cut_stsc(stbl.stsc.table, chunk))
+
     stsz2 = stbl.stsz or stbl.stz2
-    stsz2_class = stbl.stsz and stsz or stz2
-    new_stsz2 = stsz2_class(stsz2._atom, table=cut_stsz2(stsz2.table, sample))
-    new_stts = stts(stbl.stts._atom, table=cut_sctts(stbl.stts.table, sample))
+    new_stsz2 = stsz2.copy(table=cut_stsz2(stsz2.table, sample))
+
+    new_stts = stbl.stts.copy(table=cut_sctts(stbl.stts.table, sample))
+
     new_ctts = None
     if stbl.ctts:
-        new_ctts = ctts(stbl.ctts._atom,
-                        table=cut_sctts(stbl.ctts.table, sample))
+        new_ctts = stbl.ctts.copy(table=cut_sctts(stbl.ctts.table, sample))
+
     new_stss = None
     if stbl.stss:
-        new_stss = stss(stbl.stss._atom,
-                        table=cut_stss(stbl.stss.table, sample))
+        new_stss = stbl.stss.copy(table=cut_stss(stbl.stss.table, sample))
 
+    """
+    new_mdhd = atrak.mdia.mdhd.copy()
+    new_minf = atrak.mdia.minf.copy()
+    new_mdia = atrak.mdia.copy()
+    new_trak = atrak.copy()
+    """
+
+
+def update_offsets(atrak, data_offset_change):
     """
     cut_stco64(stco64, 1, ...)  # again, after calculating new size of moov
     atrak.mdia.mdhd.duration = new_duration
