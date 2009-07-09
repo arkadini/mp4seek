@@ -640,12 +640,13 @@ class ftyp(Box):
 def read_iso_file(fobj):
     fobj.seek(0)
 
-    ad = atoms.atoms_dict(atoms.read_atoms(fobj))
+    al = list(atoms.read_atoms(fobj))
+    ad = atoms.atoms_dict(al)
     aftyp, amoov, mdat = select_atoms(ad, ('ftyp', 1, 1), ('moov', 1, 1),
                                       ('mdat', 1, None))
     print '(first mdat offset: %d)' % mdat[0].offset
 
-    return aftyp, amoov
+    return aftyp, amoov, al
 
 def find_cut_trak_info(atrak, t):
     ts = atrak.mdia.mdhd.timescale
@@ -814,19 +815,48 @@ def cut_moov(amoov, t):
     map(update_trak_duration, new_traks)
     map(lambda a: update_offsets(a, moov_size_diff), new_traks)
 
-    return new_moov
+    return new_moov, new_data_offset - zero_offset
 
 
 if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
     from pprint import pprint
-    iso = read_iso_file(f)
-    print iso[0]
-    amoov = iso[1]
-    nmoov = cut_moov(amoov, float(sys.argv[2]))
+    aftyp, amoov, alist = read_iso_file(f)
+    print aftyp
+    nmoov, delta = cut_moov(amoov, float(sys.argv[2]))
 
     wf = file('/tmp/t.mp4', 'w')
-    iso[0].write(wf)
+    i, n = 0, len(alist)
+    while i < n:
+        a = alist[i]
+        i += 1
+        if a.type == 'moov':
+            break
+        a.write(wf)
+
     nmoov.write(wf)
+
+    while i < n:
+        a = alist[i]
+        i += 1
+        if a.type == 'mdat':
+            break
+        a.write(wf)
+
+    print 'starting writing mdat: @%r' % wf.tell()
+    mdat_size = a.size - delta
+    write_ulong(wf, mdat_size)
+    write_fcc(wf, 'mdat')
+
+    a.seek_to_data()
+    a.skip(delta)
+
+    wf.write(a.f.read(mdat_size))
+
+    while i < n:
+        a = alist[i]
+        i += 1
+        a.write(wf)
+
     wf.close()
