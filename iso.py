@@ -265,7 +265,7 @@ def find_chunknum_stsc(stsc, sample_num):
         samples += samples_here
         current, per_chunk = next, next_per_chunk
         i += 1
-    return (sample_num - samples) // per_chunk + current
+    return int((sample_num - samples) // per_chunk + current)
 
 def get_chunk_offset(stco64, chunk_num):
     # 1-based indices!
@@ -652,8 +652,10 @@ def find_cut_trak_info(atrak, t):
     ts = atrak.mdia.mdhd.timescale
     stbl = atrak.mdia.minf.stbl
     mt = int(t * ts)
+    print 'finding cut for trak %r @ time %r (%r/%r)' % (atrak._atom, t, mt, ts)
     sample = find_samplenum_stts(stbl.stts.table, mt)
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
+    print 'found sample: %d and chunk: %d/%r' % (sample, chunk, stbl.stsc.table[-1])
     stco64 = stbl.stco or stbl.co64
     chunk_offset = get_chunk_offset(stco64.table, chunk)
     zero_offset = get_chunk_offset(stco64.table, 1)
@@ -669,10 +671,12 @@ def cut_stsc(stsc, chunk_num):
     while i < n:
         next, next_per_chunk, next_sdidx = stsc[i]
         if next > chunk_num:
-            return [(chunk_num, per_chunk, sdidx)] + stsc[i:]
+            offset = chunk_num - 1
+            return ([(1, per_chunk, sdidx)]
+                    + [(c - offset, p_c, i) for (c, p_c, i) in stsc[i:]])
         current, per_chunk, sdidx = next, next_per_chunk, next_sdidx
         i += 1
-    return [(chunk_num, per_chunk, sdidx)]
+    return [(1, per_chunk, sdidx)]
 
 def cut_sctts(sctts, sample):
     samples = 1
@@ -702,6 +706,7 @@ def cut_stsz2(stsz2, sample):
 def cut_trak(atrak, sample, data_offset_change):
     stbl = atrak.mdia.minf.stbl
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
+    print 'cutting trak: %r @ sample %d [chnk %d]' % (atrak._atom, sample, chunk)
     media_time_diff = find_mediatime_stts(stbl.stts.table, sample) # - 0
     new_media_duration = atrak.mdia.mdhd.duration - media_time_diff
 
@@ -718,8 +723,15 @@ def cut_trak(atrak, sample, data_offset_change):
     stco64 = stbl.stco or stbl.co64
     new_stco64 = stco64.copy(table=cut_stco64(stco64.table, chunk,
                                               data_offset_change))
+    print 'stco:'
+    print '\t', len(stco64.table)
+    print '\t', len(new_stco64.table)
+
 
     new_stsc = stbl.stsc.copy(table=cut_stsc(stbl.stsc.table, chunk))
+    print 'stsc:'
+    print '\t', stbl.stsc.table
+    print '\t', new_stsc.table
 
     stsz2 = stbl.stsz or stbl.stz2
     new_stsz2 = stsz2.copy(table=cut_stsz2(stsz2.table, sample))
@@ -803,6 +815,7 @@ def cut_moov(amoov, t):
     print ('moov_size_diff', moov_size_diff, amoov.get_size(),
            new_moov.get_size())
     print 'real moov sizes', amoov._atom.size, new_moov._atom.size
+    print 'new mdat start', zero_offset - moov_size_diff - 8
 
     def update_trak_duration(atrak):
         amdhd = atrak.mdia.mdhd
@@ -818,13 +831,11 @@ def cut_moov(amoov, t):
     return new_moov, new_data_offset - zero_offset
 
 
-if __name__ == '__main__':
-    import sys
-    f = file(sys.argv[1])
+def main1(f, t):
     from pprint import pprint
     aftyp, amoov, alist = read_iso_file(f)
     print aftyp
-    nmoov, delta = cut_moov(amoov, float(sys.argv[2]))
+    nmoov, delta = cut_moov(amoov, t)
 
     wf = file('/tmp/t.mp4', 'w')
     i, n = 0, len(alist)
@@ -860,3 +871,38 @@ if __name__ == '__main__':
         a.write(wf)
 
     wf.close()
+
+def get_sync_points(f):
+    aftyp, amoov, alist = read_iso_file(f)
+    ts = amoov.mvhd.timescale
+    print aftyp
+    traks = amoov.trak
+    def find_sync_samples(a):
+        stbl = a.mdia.minf.stbl
+        if not stbl.stss:
+            return []
+        stss = stbl.stss
+        stts = stbl.stts.table
+        ts = float(a.mdia.mdhd.timescale)
+        def sample_time(s):
+            return find_mediatime_stts(stts, s) / ts
+        return map(sample_time, stss.table)
+    return [t for t in map(find_sync_samples, traks) if t][0]
+
+def get_debugging(f):
+    aftyp, amoov, alist = read_iso_file(f)
+    ts = amoov.mvhd.timescale
+    print aftyp
+    traks = amoov.trak
+
+    from pprint import pprint
+    pprint(map(lambda a: a.mdia.minf.stbl.stco, traks))
+
+if __name__ == '__main__':
+    import sys
+    f = file(sys.argv[1])
+    if len(sys.argv) > 2:
+        main1(f, float(sys.argv[2]))
+    else:
+        print get_sync_points(f)
+        # get_debugging(f)
