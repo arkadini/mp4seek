@@ -651,7 +651,7 @@ def read_iso_file(fobj):
 def find_cut_trak_info(atrak, t):
     ts = atrak.mdia.mdhd.timescale
     stbl = atrak.mdia.minf.stbl
-    mt = int(t * ts)
+    mt = int(round(t * ts))
     print 'finding cut for trak %r @ time %r (%r/%r)' % (atrak._atom, t, mt, ts)
     sample = find_samplenum_stts(stbl.stts.table, mt)
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
@@ -833,6 +833,7 @@ def cut_moov(amoov, t):
 
 def _split_headers(f, out_f, t):
     aftype, amoov, alist = read_iso_file(f)
+    t = find_nearest_syncpoint(amoov, t)
     nmoov, delta, new_offset = cut_moov(amoov, t)
 
     i, n = 0, len(alist)
@@ -918,10 +919,8 @@ def main1(f, t):
 
     wf.close()
 
-def get_sync_points(f):
-    aftyp, amoov, alist = read_iso_file(f)
+def find_sync_points(amoov):
     ts = amoov.mvhd.timescale
-    print aftyp
     traks = amoov.trak
     def find_sync_samples(a):
         stbl = a.mdia.minf.stbl
@@ -934,6 +933,26 @@ def get_sync_points(f):
             return find_mediatime_stts(stts, s) / ts
         return map(sample_time, stss.table)
     return [t for t in map(find_sync_samples, traks) if t][0]
+
+def find_nearest_syncpoint(amoov, t):
+    syncs = find_sync_points(amoov)
+
+    found = 0
+    other = 0
+    for ss in syncs:
+        if ss > t:
+            other = ss
+            break
+        found = ss
+    return (abs(t - found) < abs(other - t)) and found or other
+
+def get_nearest_syncpoint(f, t):
+    aftyp, amoov, alist = read_iso_file(f)
+    print find_nearest_syncpoint(amoov, t)
+
+def get_sync_points(f):
+    aftyp, amoov, alist = read_iso_file(f)
+    return find_sync_points(amoov)
 
 def get_debugging(f):
     aftyp, amoov, alist = read_iso_file(f)
@@ -948,7 +967,9 @@ if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
     if len(sys.argv) > 2:
-        main2(f, float(sys.argv[2]))
+        t = float(sys.argv[2])
+        main2(f, t)
+        # get_nearest_syncpoint(f, t)
     else:
         print get_sync_points(f)
         # get_debugging(f)
