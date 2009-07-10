@@ -828,14 +828,60 @@ def cut_moov(amoov, t):
     map(update_trak_duration, new_traks)
     map(lambda a: update_offsets(a, moov_size_diff), new_traks)
 
-    return new_moov, new_data_offset - zero_offset
+    return new_moov, new_data_offset - zero_offset, new_data_offset
 
+
+def _split_headers(in_f, out_f, t):
+    aftype, amoov, alist = read_iso_file(f)
+    nmoov, delta, new_offset = cut_moov(amoov, t)
+
+    i, n = 0, len(alist)
+    while i < n:
+        a = alist[i]
+        i += 1
+        if a.type == 'moov':
+            break
+        a.write(out_f)
+
+    nmoov.write(out_f)
+
+    while i < n:
+        a = alist[i]
+        i += 1
+        if a.type == 'mdat':
+            break
+        a.write(out_f)
+
+    mdat_size = a.size - delta
+    write_ulong(out_f, mdat_size)
+    write_fcc(out_f, 'mdat')
+
+    return new_offset
+
+def split(f, t, out_f=None):
+    wf = out_f
+    if wf is None:
+        from cStringIO import StringIO
+        wf = StringIO()
+
+    new_offset = _split_headers(f, wf, t)
+    return wf, new_offset
+
+def split_and_write(in_f, out_f, t):
+    header_f, new_offset = split(in_f, t)
+    header_f.seek(0)
+    out_f.write(header_f.read())
+    in_f.seek(new_offset)
+    out_f.write(in_f.read())
+
+def main2(f, t):
+    split_and_write(f, file('/tmp/t.mp4', 'w'), t)
 
 def main1(f, t):
     from pprint import pprint
     aftyp, amoov, alist = read_iso_file(f)
     print aftyp
-    nmoov, delta = cut_moov(amoov, t)
+    nmoov, delta, _ = cut_moov(amoov, t)
 
     wf = file('/tmp/t.mp4', 'w')
     i, n = 0, len(alist)
@@ -902,7 +948,7 @@ if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
     if len(sys.argv) > 2:
-        main1(f, float(sys.argv[2]))
+        main2(f, float(sys.argv[2]))
     else:
         print get_sync_points(f)
         # get_debugging(f)
