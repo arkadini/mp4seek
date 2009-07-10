@@ -831,7 +831,7 @@ def cut_moov(amoov, t):
     return new_moov, new_data_offset - zero_offset, new_data_offset
 
 
-def _split_headers(in_f, out_f, t):
+def _split_headers(f, out_f, t):
     aftype, amoov, alist = read_iso_file(f)
     nmoov, delta, new_offset = cut_moov(amoov, t)
 
