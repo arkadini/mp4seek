@@ -1,3 +1,4 @@
+from math import ceil
 import struct
 
 import atoms
@@ -227,12 +228,13 @@ def find_samplenum_stts(stts, mt):
     samples = 1
     i, n = 0, len(stts)
     while i < n:
+        # print 'fsstts:', mt, ctime, stts[i], samples, ctime
         if mt == ctime:
             break
         count, delta = stts[i]
         cdelta = count * delta
         if mt < ctime + cdelta:
-            samples += (mt - ctime) // delta
+            samples += int(ceil((mt - ctime) / float(delta)))
             break
         ctime += cdelta
         samples += count
@@ -258,6 +260,7 @@ def find_chunknum_stsc(stsc, sample_num):
     samples = 1
     i, n = 0, len(stsc)
     while i < n:
+        # print 'fcnstsc:', sample_num, current, stsc[i], samples, per_chunk
         next, next_per_chunk, _sdidx = stsc[i]
         samples_here = (next - current) * per_chunk
         if samples + samples_here > sample_num:
@@ -652,6 +655,7 @@ def find_cut_trak_info(atrak, t):
     ts = atrak.mdia.mdhd.timescale
     stbl = atrak.mdia.minf.stbl
     mt = int(round(t * ts))
+    print 'media time:', mt, t, ts, t * ts
     print 'finding cut for trak %r @ time %r (%r/%r)' % (atrak._atom, t, mt, ts)
     sample = find_samplenum_stts(stbl.stts.table, mt)
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
@@ -659,10 +663,13 @@ def find_cut_trak_info(atrak, t):
     stco64 = stbl.stco or stbl.co64
     chunk_offset = get_chunk_offset(stco64.table, chunk)
     zero_offset = get_chunk_offset(stco64.table, 1)
+    print 'found chunk offsets:', chunk_offset, zero_offset
     return sample, chunk, zero_offset, chunk_offset
 
-def cut_stco64(stco64, chunk_num, offset_change):
+def cut_stco64(stco64, chunk_num, offset_change, first_chunk_delta=0):
     new_table = [offset - offset_change for offset in stco64[chunk_num - 1:]]
+    if new_table and first_chunk_delta:
+        new_table[0] = new_table[0] + first_chunk_delta
     return new_table
 
 def cut_stsc(stsc, chunk_num):
@@ -677,6 +684,47 @@ def cut_stsc(stsc, chunk_num):
         current, per_chunk, sdidx = next, next_per_chunk, next_sdidx
         i += 1
     return [(1, per_chunk, sdidx)]
+
+def cut_stco64_stsc(stco64, stsc, stsz2, chunk_num, sample_num, offset_change):
+    new_stsc = None
+
+    i, n = 0, len(stsc)
+    current, per_chunk, sdidx = 1, 0, None
+    samples = 1
+    while i < n:
+        next, next_per_chunk, next_sdidx = stsc[i]
+        if next > chunk_num:
+            offset = chunk_num - 1
+            new_stsc = ([(1, per_chunk, sdidx)]
+                        + [(c - offset, p_c, j)
+                           for (c, p_c, j) in stsc[i:]])
+            break
+        samples += (next - current) * per_chunk
+        current, per_chunk, sdidx = next, next_per_chunk, next_sdidx
+        i += 1
+    if new_stsc is None:
+        new_stsc = [(1, per_chunk, sdidx)]
+
+    lead_samples = (sample_num - samples) % per_chunk
+
+    bytes_offset = 0
+    if lead_samples > 0:
+        bytes_offset = sum(stsz2[sample_num - 1 - lead_samples :
+                                     sample_num - 1])
+    # print 'lead_samples:', lead_samples, 'bytes_offset:', bytes_offset
+
+    if lead_samples > 0:
+        fstsc = new_stsc[0]
+        new_fstsc = (1, fstsc[1] - lead_samples, fstsc[2])
+        # print 'old stsc', new_stsc
+        if len(new_stsc) > 1 and new_stsc[1][0] == 2:
+            new_stsc[0] = new_fstsc
+        else:
+            new_stsc[0:1] = [new_fstsc, (2, fstsc[1], fstsc[2])]
+        # print 'new stsc', new_stsc
+
+    return (cut_stco64(stco64, chunk_num, offset_change, bytes_offset),
+            new_stsc)
 
 def cut_sctts(sctts, sample):
     samples = 1
@@ -693,6 +741,7 @@ def cut_stss(stss, sample):
     i, n = 0, len(stss)
     while i < n:
         snum = stss[i]
+        # print 'cut_stss:', snum, sample
         if snum >= sample:
             return [s - sample + 1 for s in stss[i:]]
         i += 1
@@ -721,19 +770,23 @@ def cut_trak(atrak, sample, data_offset_change):
     """
     
     stco64 = stbl.stco or stbl.co64
-    new_stco64 = stco64.copy(table=cut_stco64(stco64.table, chunk,
-                                              data_offset_change))
+    stsz2 = stbl.stsz or stbl.stz2
+
+    new_stco64_t, new_stsc_t = cut_stco64_stsc(stco64.table, stbl.stsc.table,
+                                               stsz2.table, chunk, sample,
+                                               data_offset_change)
+
+    new_stco64 = stco64.copy(table=new_stco64_t)
     print 'stco:'
     print '\t', len(stco64.table)
     print '\t', len(new_stco64.table)
 
 
-    new_stsc = stbl.stsc.copy(table=cut_stsc(stbl.stsc.table, chunk))
+    new_stsc = stbl.stsc.copy(table=new_stsc_t)
     print 'stsc:'
     print '\t', stbl.stsc.table
     print '\t', new_stsc.table
 
-    stsz2 = stbl.stsz or stbl.stz2
     new_stsz2 = stsz2.copy(table=cut_stsz2(stsz2.table, sample))
 
     new_stts = stbl.stts.copy(table=cut_sctts(stbl.stts.table, sample))
@@ -834,6 +887,7 @@ def cut_moov(amoov, t):
 def _split_headers(f, out_f, t):
     aftype, amoov, alist = read_iso_file(f)
     t = find_nearest_syncpoint(amoov, t)
+    print 'nearest syncpoint:', t
     nmoov, delta, new_offset = cut_moov(amoov, t)
 
     i, n = 0, len(alist)
@@ -875,49 +929,8 @@ def split_and_write(in_f, out_f, t):
     in_f.seek(new_offset)
     out_f.write(in_f.read())
 
-def main2(f, t):
+def main(f, t):
     split_and_write(f, file('/tmp/t.mp4', 'w'), t)
-
-def main1(f, t):
-    from pprint import pprint
-    aftyp, amoov, alist = read_iso_file(f)
-    print aftyp
-    nmoov, delta, _ = cut_moov(amoov, t)
-
-    wf = file('/tmp/t.mp4', 'w')
-    i, n = 0, len(alist)
-    while i < n:
-        a = alist[i]
-        i += 1
-        if a.type == 'moov':
-            break
-        a.write(wf)
-
-    nmoov.write(wf)
-
-    while i < n:
-        a = alist[i]
-        i += 1
-        if a.type == 'mdat':
-            break
-        a.write(wf)
-
-    print 'starting writing mdat: @%r' % wf.tell()
-    mdat_size = a.size - delta
-    write_ulong(wf, mdat_size)
-    write_fcc(wf, 'mdat')
-
-    a.seek_to_data()
-    a.skip(delta)
-
-    wf.write(a.f.read(mdat_size))
-
-    while i < n:
-        a = alist[i]
-        i += 1
-        a.write(wf)
-
-    wf.close()
 
 def find_sync_points(amoov):
     ts = amoov.mvhd.timescale
@@ -930,7 +943,9 @@ def find_sync_points(amoov):
         stts = stbl.stts.table
         ts = float(a.mdia.mdhd.timescale)
         def sample_time(s):
-            return find_mediatime_stts(stts, s) / ts
+            mt = find_mediatime_stts(stts, s) / ts
+            # print 'sample_time:', mt, s
+            return mt
         return map(sample_time, stss.table)
     return [t for t in map(find_sync_samples, traks) if t][0]
 
@@ -944,7 +959,9 @@ def find_nearest_syncpoint(amoov, t):
             other = ss
             break
         found = ss
-    return (abs(t - found) < abs(other - t)) and found or other
+    if (abs(t - found) < abs(other - t)):
+        return found
+    return other
 
 def get_nearest_syncpoint(f, t):
     aftyp, amoov, alist = read_iso_file(f)
@@ -968,7 +985,7 @@ if __name__ == '__main__':
     f = file(sys.argv[1])
     if len(sys.argv) > 2:
         t = float(sys.argv[2])
-        main2(f, t)
+        main(f, t)
         # get_nearest_syncpoint(f, t)
     else:
         print get_sync_points(f)
