@@ -884,12 +884,17 @@ def cut_moov(amoov, t):
     return new_moov, new_data_offset - zero_offset, new_data_offset
 
 
-def _split_headers(f, out_f, t):
+def split_atoms(f, out_f, t):
     aftype, amoov, alist = read_iso_file(f)
     t = find_nearest_syncpoint(amoov, t)
     print 'nearest syncpoint:', t
     nmoov, delta, new_offset = cut_moov(amoov, t)
 
+    write_split_header(out_f, nmoov, alist, delta)
+
+    return new_offset
+
+def write_split_header(out_f, amoov, alist, size_delta):
     i, n = 0, len(alist)
     while i < n:
         a = alist[i]
@@ -898,7 +903,7 @@ def _split_headers(f, out_f, t):
             break
         a.write(out_f)
 
-    nmoov.write(out_f)
+    amoov.write(out_f)
 
     while i < n:
         a = alist[i]
@@ -907,11 +912,9 @@ def _split_headers(f, out_f, t):
             break
         a.write(out_f)
 
-    mdat_size = a.size - delta
+    mdat_size = a.size - size_delta
     write_ulong(out_f, mdat_size)
     write_fcc(out_f, 'mdat')
-
-    return new_offset
 
 def split(f, t, out_f=None):
     wf = out_f
@@ -919,7 +922,7 @@ def split(f, t, out_f=None):
         from cStringIO import StringIO
         wf = StringIO()
 
-    new_offset = _split_headers(f, wf, t)
+    new_offset = split_atoms(f, wf, t)
     return wf, new_offset
 
 def split_and_write(in_f, out_f, t):
