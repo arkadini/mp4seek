@@ -56,11 +56,13 @@ class Splitter(object):
         copying data for the original file should start
         @rtype:   StringIO, int
         """
+        if self._out_f is None:
+            self._build_result()
         return self._out_f, self._out_offset
 
     def _handle_feed(self, data):
         if self._all_found:
-            self._build_result(data)
+            self.in_f = StringIO(data)
             return 0, 0
 
         a, next = get_stub(self._offset, data)
@@ -79,9 +81,8 @@ class Splitter(object):
 
         return self.next_chunk()
 
-    def _build_result(self, data):
-        in_f, out_f = StringIO(data), StringIO()
-        self._out_f, self._out_offset = iso.split(in_f, self.t, out_f=out_f)
+    def _build_result(self):
+        self._out_f, self._out_offset = iso.split(self.in_f, self.t, out_f=StringIO())
 
     def next_chunk(self):
         if self._all_found:
