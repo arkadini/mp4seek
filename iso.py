@@ -647,7 +647,7 @@ def read_iso_file(fobj):
     ad = atoms.atoms_dict(al)
     aftyp, amoov, mdat = select_atoms(ad, ('ftyp', 1, 1), ('moov', 1, 1),
                                       ('mdat', 1, None))
-    print '(first mdat offset: %d)' % mdat[0].offset
+    # print '(first mdat offset: %d)' % mdat[0].offset
 
     return aftyp, amoov, al
 
@@ -655,15 +655,17 @@ def find_cut_trak_info(atrak, t):
     ts = atrak.mdia.mdhd.timescale
     stbl = atrak.mdia.minf.stbl
     mt = int(round(t * ts))
-    print 'media time:', mt, t, ts, t * ts
-    print 'finding cut for trak %r @ time %r (%r/%r)' % (atrak._atom, t, mt, ts)
+    # print 'media time:', mt, t, ts, t * ts
+    # print ('finding cut for trak %r @ time %r (%r/%r)' %
+    #        (atrak._atom, t, mt, ts))
     sample = find_samplenum_stts(stbl.stts.table, mt)
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
-    print 'found sample: %d and chunk: %d/%r' % (sample, chunk, stbl.stsc.table[-1])
+    # print ('found sample: %d and chunk: %d/%r' %
+    #        (sample, chunk, stbl.stsc.table[-1]))
     stco64 = stbl.stco or stbl.co64
     chunk_offset = get_chunk_offset(stco64.table, chunk)
     zero_offset = get_chunk_offset(stco64.table, 1)
-    print 'found chunk offsets:', chunk_offset, zero_offset
+    # print 'found chunk offsets:', chunk_offset, zero_offset
     return sample, chunk, zero_offset, chunk_offset
 
 def cut_stco64(stco64, chunk_num, offset_change, first_chunk_delta=0):
@@ -755,7 +757,8 @@ def cut_stsz2(stsz2, sample):
 def cut_trak(atrak, sample, data_offset_change):
     stbl = atrak.mdia.minf.stbl
     chunk = find_chunknum_stsc(stbl.stsc.table, sample)
-    print 'cutting trak: %r @ sample %d [chnk %d]' % (atrak._atom, sample, chunk)
+    # print ('cutting trak: %r @ sample %d [chnk %d]' %
+    #        (atrak._atom, sample, chunk))
     media_time_diff = find_mediatime_stts(stbl.stts.table, sample) # - 0
     new_media_duration = atrak.mdia.mdhd.duration - media_time_diff
 
@@ -777,15 +780,8 @@ def cut_trak(atrak, sample, data_offset_change):
                                                data_offset_change)
 
     new_stco64 = stco64.copy(table=new_stco64_t)
-    print 'stco:'
-    print '\t', len(stco64.table)
-    print '\t', len(new_stco64.table)
-
 
     new_stsc = stbl.stsc.copy(table=new_stsc_t)
-    print 'stsc:'
-    print '\t', stbl.stsc.table
-    print '\t', new_stsc.table
 
     new_stsz2 = stsz2.copy(table=cut_stsz2(stsz2.table, sample))
 
@@ -849,14 +845,14 @@ def cut_moov(amoov, t):
         raise RuntimeError('Exceeded file duration: %r' %
                            (duration / float(ts)))
     traks = amoov.trak
-    print 'movie timescale: %d, num tracks: %d' % (ts, len(traks))
-    print
+    # print 'movie timescale: %d, num tracks: %d' % (ts, len(traks))
+    # print
     cut_info = map(lambda a: find_cut_trak_info(a, t), traks)
-    print 'cut_info:', cut_info
+    # print 'cut_info:', cut_info
     new_data_offset = min([ci[3] for ci in cut_info])
     zero_offset = min([ci[2] for ci in cut_info])
-    print 'new offset: %d, delta: %d' % (new_data_offset,
-                                         new_data_offset - zero_offset)
+    # print 'new offset: %d, delta: %d' % (new_data_offset,
+    #                                      new_data_offset - zero_offset)
 
     new_traks = map(lambda a, ci: cut_trak(a, ci[0],
                                            new_data_offset - zero_offset),
@@ -865,10 +861,10 @@ def cut_moov(amoov, t):
     new_moov = amoov.copy(mvhd=amoov.mvhd.copy(), trak=new_traks)
 
     moov_size_diff = amoov.get_size() - new_moov.get_size()
-    print ('moov_size_diff', moov_size_diff, amoov.get_size(),
-           new_moov.get_size())
-    print 'real moov sizes', amoov._atom.size, new_moov._atom.size
-    print 'new mdat start', zero_offset - moov_size_diff - 8
+    # print ('moov_size_diff', moov_size_diff, amoov.get_size(),
+    #        new_moov.get_size())
+    # print 'real moov sizes', amoov._atom.size, new_moov._atom.size
+    # print 'new mdat start', zero_offset - moov_size_diff - 8
 
     def update_trak_duration(atrak):
         amdhd = atrak.mdia.mdhd
@@ -887,7 +883,7 @@ def cut_moov(amoov, t):
 def split_atoms(f, out_f, t):
     aftype, amoov, alist = read_iso_file(f)
     t = find_nearest_syncpoint(amoov, t)
-    print 'nearest syncpoint:', t
+    # print 'nearest syncpoint:', t
     nmoov, delta, new_offset = cut_moov(amoov, t)
 
     write_split_header(out_f, nmoov, alist, delta)
