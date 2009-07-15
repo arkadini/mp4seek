@@ -979,6 +979,58 @@ def get_debugging(f):
     from pprint import pprint
     pprint(map(lambda a: a.mdia.minf.stbl.stco, traks))
 
+def move_moov(amoov, data_offset):
+    traks = amoov.trak
+    # FIXME: make the offset direction sane in update_offsets...?
+    map(lambda a: update_offsets(a, - data_offset), traks)
+    return amoov
+
+def move_header_to_front(f, out_f):
+    def find_atom(alist, type):
+        return [a.type for a in alist].index(type)
+
+    def copy_atoms(out_f, alist):
+        # alist - list of Atoms, not Boxes
+        for a in alist:
+            a.write(out_f)
+
+    aftype, amoov, alist = read_iso_file(f)
+
+    moov_idx = find_atom(alist, 'moov')
+    mdat_idx = find_atom(alist, 'mdat')
+
+    if moov_idx < mdat_idx:
+        # nothing to be done
+        return None
+
+    adict = atoms.atoms_dict(alist)
+    mdat = alist[mdat_idx]
+
+    new_moov_idx = mdat_idx
+    if 'wide' in adict:
+        # if 'wide' atom preceeds 'mdat', let's keep it that way
+        for wide in adict['wide']:
+            if wide.offset + wide.size == new_offset:
+                new_moov_idx -= 1
+                break
+
+    # for the moment assuming rewriting offsets in moov won't change
+    # the atoms sizes - could happen if:
+    #   2**32 - 1 - last_chunk_offset < moov.size
+    data_offset = amoov.get_size()
+
+    nmoov = move_moov(amoov, data_offset)
+
+    del alist[moov_idx]
+
+    copy_atoms(out_f, alist[0:new_moov_idx])
+    nmoov.write(out_f)
+    copy_atoms(out_f, alist[new_moov_idx:])
+
+def move_header_and_write(f, out_f):
+    move_header_to_front(f, out_f)
+
+
 if __name__ == '__main__':
     import sys
     f = file(sys.argv[1])
