@@ -1,4 +1,4 @@
-from iso import move_header_and_write
+from mp4seek.iso import move_header_and_write
 
 if __name__ == '__main__':
     import sys
