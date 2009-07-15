@@ -200,36 +200,6 @@ def write_atoms(alist, f):
     for a in alist:
         a.write(f)
 
-def ellipsisize(l, num=4):
-    if len(l) <= num:
-        return l
-    # ... for displaying, "ellipsisize!" :P
-    return l[0:min(num, len(l) - 1)] + ['...'] + l[-1:]
-
-def container_children(a):
-    a = atoms.container(a)
-    cd = atoms.atoms_dict(a.read_children())
-    return a, cd
-
-def find_cut_stts(stts, mt):
-    "stts - table of the 'stts' atom; mt - media time"
-    current = 0
-    trimmed = None
-    i, n = 0, len(stts)
-    while i < n:
-        count, delta = stts[i]
-        cdelta = count * delta
-        if mt == current:
-            trimmed = stts[i + 1:]
-            break
-        elif mt < current + cdelta:
-            new_count = count - (mt - current) / delta
-            trimmed = [(new_count, delta)] + stts[i + 1:]
-            break
-        current += cdelta
-        i += 1
-    return trimmed or stts
-
 def find_samplenum_stts(stts, mt):
     "stts - table of the 'stts' atom; mt - media time"
     ctime = 0
@@ -682,19 +652,6 @@ def cut_stco64(stco64, chunk_num, offset_change, first_chunk_delta=0):
         new_table[0] = new_table[0] + first_chunk_delta
     return new_table
 
-def cut_stsc(stsc, chunk_num):
-    i, n = 0, len(stsc)
-    current, per_chunk, sdidx = None, None, None
-    while i < n:
-        next, next_per_chunk, next_sdidx = stsc[i]
-        if next > chunk_num:
-            offset = chunk_num - 1
-            return ([(1, per_chunk, sdidx)]
-                    + [(c - offset, p_c, i) for (c, p_c, i) in stsc[i:]])
-        current, per_chunk, sdidx = next, next_per_chunk, next_sdidx
-        i += 1
-    return [(1, per_chunk, sdidx)]
-
 def cut_stco64_stsc(stco64, stsc, stsz2, chunk_num, sample_num, offset_change):
     new_stsc = None
 
@@ -899,24 +856,16 @@ def split_atoms(f, out_f, t):
     return new_offset
 
 def write_split_header(out_f, amoov, alist, size_delta):
-    i, n = 0, len(alist)
-    while i < n:
-        a = alist[i]
-        i += 1
-        if a.type == 'moov':
-            break
-        a.write(out_f)
+    moov_idx = find_atom(alist, 'moov')
+    mdat_idx = find_atom(alist, 'mdat')
 
-    amoov.write(out_f)
+    mdat = alist[mdat_idx]
 
-    while i < n:
-        a = alist[i]
-        i += 1
-        if a.type == 'mdat':
-            break
-        a.write(out_f)
+    alist[moov_idx] = amoov
 
-    mdat_size = a.size - size_delta
+    write_atoms(alist[:mdat_idx], out_f)
+
+    mdat_size = mdat.size - size_delta
     write_ulong(out_f, mdat_size)
     write_fcc(out_f, 'mdat')
 
