@@ -261,7 +261,26 @@ def find_mediatime_stts(stts, sample):
             return ctime + (sample - samples) * delta
         ctime += count * delta
         samples += count
+        i += 1
     return ctime
+
+def find_mediatimes(stts, samples):
+    ctime = 0
+    total_samples = 1
+    ret = []
+    i, n = 0, len(stts)
+    j, m = 0, len(samples)
+    while i < n and j < m:
+        count, delta = stts[i]
+        sample = samples[j]
+        if total_samples + count >= sample:
+            ret.append(ctime + (sample - total_samples) * delta)
+            j += 1
+            continue
+        ctime += count * delta
+        total_samples += count
+        i += 1
+    return ret
 
 def find_chunknum_stsc(stsc, sample_num):
     current = 1                 # 1-based indices!
@@ -923,11 +942,7 @@ def find_sync_points(amoov):
         stss = stbl.stss
         stts = stbl.stts.table
         ts = float(a.mdia.mdhd.timescale)
-        def sample_time(s):
-            mt = find_mediatime_stts(stts, s) / ts
-            # print 'sample_time:', mt, s
-            return mt
-        return map(sample_time, stss.table)
+        return map(lambda mt: mt / ts, find_mediatimes(stts, stss.table))
     return [t for t in map(find_sync_samples, traks) if t][0]
 
 def find_nearest_syncpoint(amoov, t):
