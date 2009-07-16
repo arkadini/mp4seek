@@ -20,9 +20,11 @@ def fstart_file(inpath, outpath=None):
     fo.flush()
     if not moved and outpath:
         # no changes, but output file specified
+        fi.seek(0)
         shutil.copyfileobj(fi, fo)
     if moved and not outpath:
         # some changes and using temporary file
+        fo.close()
         shutil.move(temppath, inpath)
 
     fi.close()
