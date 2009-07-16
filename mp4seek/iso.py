@@ -982,6 +982,8 @@ def move_header_and_write(in_f, out_f):
     alist = move_header_to_front(in_f)
     if alist:
         write_atoms(alist, out_f)
+        return True
+    return False
 
 
 if __name__ == '__main__':

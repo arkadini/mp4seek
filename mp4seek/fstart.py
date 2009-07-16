@@ -14,11 +14,19 @@ def fstart_file(inpath, outpath=None):
         fd, temppath = tempfile.mkstemp()
         shutil.copymode(inpath, temppath)
         fo = os.fdopen(fd, 'wb')
-    move_header_and_write(fi, fo)
+
+    moved = move_header_and_write(fi, fo)
+
+    fo.flush()
+    if not moved and outpath:
+        # no changes, but output file specified
+        shutil.copyfileobj(fi, fo)
+    if moved and not outpath:
+        # some changes and using temporary file
+        shutil.move(temppath, inpath)
+
     fi.close()
     fo.close()
-    if not outpath:
-        shutil.move(temppath, inpath)
 
 def main():
     if not 2 <= len(sys.argv) <= 3:
