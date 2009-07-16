@@ -978,12 +978,9 @@ def move_header_to_front(f):
 
     return alist
 
-def move_header_and_write(f, out_fname):
-    alist = move_header_to_front(f)
-    if alist:
-        write_atoms(alist, file(out_fname, 'w'))
-        return True
-    return False
+def move_header_and_write(in_f, out_f):
+    alist = move_header_to_front(in_f)
+    write_atoms(alist, out_f)
 
 
 if __name__ == '__main__':

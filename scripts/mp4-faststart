@@ -1,0 +1,4 @@
+#!/usr/bin/python
+
+from mp4seek import fstart
+fstart.main()

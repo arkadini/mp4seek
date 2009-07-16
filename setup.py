@@ -19,4 +19,5 @@ setup(name="mp4seek",
       maintainer="Arek Korbik",
       author_email="arkadini@gmail.com",
       maintainer_email="arkadini@gmail.com",
-      packages=["mp4seek"])
+      packages=["mp4seek"],
+      scripts=["scripts/mp4-faststart"])
