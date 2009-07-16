@@ -16,6 +16,37 @@ def write_fcc(fobj, fcc_str):
     fobj.write('%-4.4s' % fcc_str)
 
 
+def takeby(seq, n, force_tuples=False):
+    if n == 1 and not force_tuples:
+        return seq
+    return [tuple(seq[i:i + n]) for i in xrange(0, len(seq), n)]
+
+def read_table(f, row_spec, entries, spec_prefix='>'):
+    """Read a continuous region of file and unpack it into a list of
+    tuples using the given struct specification of a single row.
+
+    @param row_spec: spec describing single row of table using same
+                     syntax as in L{struct} module.
+    @type  row_spec: str
+
+    @param entries: number of rows to read
+    @type  entries: int
+
+    @param spec_prefix: optional specification that will be used for
+                        the whole table
+    @type  spec_prefix: str
+    """
+    row_bytes = struct.calcsize('%s%s' % (spec_prefix, row_spec))
+    data = f.read(row_bytes * entries)
+    try:
+        l = struct.unpack('%s%s' % (spec_prefix, row_spec * entries), data)
+    except struct.error:
+        raise RuntimeError('Not enough data: requested %d, read %d' %
+                           (row_bytes * entries, len(data)))
+
+    per_row = len(l) / entries
+    return takeby(l, per_row)
+
 class UnsuportedVersion(Exception):
     pass
 
@@ -356,7 +387,7 @@ class stts(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
+        t = read_table(a.f, 'LL', entries)
         return cls(a, table=t)
 
     def get_size(self):
@@ -376,7 +407,7 @@ class ctts(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [(read_ulong(a.f), read_ulong(a.f)) for _ in xrange(entries)]
+        t = read_table(a.f, 'LL', entries)
         return cls(a, table=t)
 
     def get_size(self):
@@ -396,7 +427,7 @@ class stss(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [read_ulong(a.f) for _ in xrange(entries)]
+        t = read_table(a.f, 'L', entries)
         return cls(a, table=t)
 
     def get_size(self):
@@ -417,7 +448,7 @@ class stsz(FullBox):
         ss = read_ulong(a.f)
         entries = read_ulong(a.f)
         if ss == 0:
-            t = [read_ulong(a.f) for _ in xrange(entries)]
+            t = read_table(a.f, 'L', entries)
         else:
             t = []
         return cls(a, sample_size=ss, table=t)
@@ -442,8 +473,8 @@ class stsc(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [(read_ulong(a.f), read_ulong(a.f), read_ulong(a.f))
-             for _ in xrange(entries)]
+        t = read_table(a.f, 'LLL', entries)
+
         return cls(a, table=t)
 
     def get_size(self):
@@ -464,7 +495,7 @@ class stco(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [read_ulong(a.f) for _ in xrange(entries)]
+        t = read_table(a.f, 'L', entries)
         return cls(a, table=t)
 
     def get_size(self):
@@ -483,7 +514,7 @@ class co64(FullBox):
     @fullboxread
     def read(cls, a):
         entries = read_ulong(a.f)
-        t = [read_ulonglong(a.f) for _ in xrange(entries)]
+        t = read_table(a.f, 'Q', entries)
         return cls(a, table=t)
 
     def get_size(self):
@@ -504,10 +535,6 @@ class stz2(FullBox):
         field_size = read_ulong(a.f) & 0xff
         entries = read_ulong(a.f)
 
-        def read_u16(f):
-            return struct.unpack('>H', read_bytes(f, 2))[0]
-        def read_u8(f):
-            return read_bytes(f, 1)
         def read_2u4(f):
             b = read_bytes(f, 1)
             return (b >> 4) & 0x0f, b & 0x0f
@@ -517,9 +544,9 @@ class stz2(FullBox):
                 ret.extend(elt)
             return ret
         if field_size == 16:
-            t = [read_u16(a.f) for _ in xrange(entries)]
+            t = read_table(a.f, 'H', entries)
         elif field_size == 8:
-            t = [read_u8(a.f) for _ in xrange(entries)]
+            t = read_table(a.f, 'B', entries)
         elif field_size == 4:
             t = flatten([read_2u4(a.f) for _ in xrange((entries + 1) / 2)])
         else:
@@ -541,8 +568,6 @@ class stz2(FullBox):
             fobj.write(struct.pack('B', n))
         def write_2u4(f, n, m):
             fobj.write(struct.pack('B', ((n & 0x0f) << 4) | (m & 0x0f)))
-        def takeby(seq, n):
-            return [seq[i:i + n] for i in xrange(0, len(seq), n)]
         if field_size == 16:
             for elt in self.table:
                 write_u16(fobj, elt)
