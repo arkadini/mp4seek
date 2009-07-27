@@ -899,19 +899,48 @@ def split_atoms(f, out_f, t):
 
     return new_offset
 
+def update_mdat_atoms(alist, size_delta):
+    updated = []
+    to_remove = size_delta
+    pos = alist[0].offset
+    for a in alist:
+        data_size = a.size - a.head_size()
+        size_change = min(data_size, to_remove)
+        if size_change > 0:
+            to_remove -= size_change
+        new_size = real_size = a.size - size_change
+        if a.real_size == 1:
+            real_size = 1
+        updated.append(atoms.Atom(new_size, 'mdat', pos, a.f,
+                                  real_size=real_size))
+        if to_remove == 0:
+            break
+        pos += new_size
+    return updated
+
 def write_split_header(out_f, amoov, alist, size_delta):
     moov_idx = find_atom(alist, 'moov')
     mdat_idx = find_atom(alist, 'mdat')
 
     mdat = alist[mdat_idx]
 
+    cut_offset = mdat.offset + mdat.head_size() + size_delta
+    to_update = [a for a in alist[mdat_idx:] if a.offset < cut_offset]
+
+    if [a for a in to_update if a.type != 'mdat']:
+        raise FormatError('"mdat" and non-"mdat" (to-update) atoms mixed')
+
+    updated_mdats = update_mdat_atoms(to_update, size_delta)
+
     alist[moov_idx] = amoov
 
     write_atoms(alist[:mdat_idx], out_f)
 
-    mdat_size = mdat.size - size_delta
-    write_ulong(out_f, mdat_size)
-    write_fcc(out_f, 'mdat')
+    for a in updated_mdats:
+        write_ulong(out_f, a.real_size)
+        write_fcc(out_f, a.type)
+        if a.real_size == 1:
+            write_ulonglong(out_f, a.size)
 
 def split(f, t, out_f=None):
     wf = out_f
