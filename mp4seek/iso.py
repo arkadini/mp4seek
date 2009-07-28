@@ -1031,7 +1031,7 @@ def move_header_to_front(f):
     if 'wide' in adict:
         # if 'wide' atom preceeds 'mdat', let's keep it that way
         for wide in adict['wide']:
-            if wide.offset + wide.size == new_offset:
+            if wide.offset + wide.size == mdat.offset:
                 new_moov_idx -= 1
                 break
 
