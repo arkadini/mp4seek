@@ -972,10 +972,20 @@ def find_sync_points(amoov):
         stts = stbl.stts.table
         ts = float(a.mdia.mdhd.timescale)
         return map(lambda mt: mt / ts, find_mediatimes(stts, stss.table))
-    return [t for t in map(find_sync_samples, traks) if t][0]
+    sync_tables = [t for t in map(find_sync_samples, traks) if t]
+    if sync_tables:
+        # ideally there should be only one sync table (from a video
+        # trak) - an arbitrary one will be taken otherwise...
+        return sync_tables[0]
+    return []
 
 def find_nearest_syncpoint(amoov, t):
     syncs = find_sync_points(amoov)
+
+    if not syncs:
+        # hardcoding duration - 0.1 sec as the farthest seek pos for now...
+        max_ts = amoov.mvhd.duration / float(amoov.mvhd.timescale) - 0.1
+        return max(0, min(t, max_ts))
 
     found = 0
     other = 0
