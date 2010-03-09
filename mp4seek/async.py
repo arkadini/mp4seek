@@ -113,7 +113,7 @@ def read_atom_stub(offset, data):
     size, type = struct.unpack('>L4s', data[0:8])
     real_size = size
     if size == 1:
-        size = struct.unpack('>Q', data[8:16])
+        size = struct.unpack('>Q', data[8:16])[0]
     return AtomStub(size, type, offset, real_size)
 
 def get_stub(offset, data):
