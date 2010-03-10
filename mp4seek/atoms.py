@@ -1,5 +1,8 @@
 import struct
 
+BUFFER_SIZE = 16*1024
+
+
 class Atom(object):
     def __init__(self, size, type, offset, fobj, real_size=None):
         self.size = size
@@ -45,7 +48,11 @@ class Atom(object):
     def write(self, fobj):
         # print '[ a] writing:', self
         self.seek_to_start()
-        fobj.write(self.read_bytes(self.size))
+        remaining = self.size
+        while remaining > 0:
+            buf = self.read_bytes(min(remaining, BUFFER_SIZE))
+            remaining -= len(buf)
+            fobj.write(buf)
 
     def itype(self):
         return struct.unpack('>L', self.type)[0]
